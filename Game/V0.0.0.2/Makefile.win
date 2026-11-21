@@ -1,0 +1,49 @@
+# Project: Project1
+# Makefile created by Dev-C++ 5.11
+
+CPP      = g++.exe
+CC       = gcc.exe
+WINDRES  = windres.exe
+OBJ      = files/action.o files/combat.o files/ending.o files/game.o files/main.o files/outcome.o files/player.o files/util.o
+LINKOBJ  = files/action.o files/combat.o files/ending.o files/game.o files/main.o files/outcome.o files/player.o files/util.o
+LIBS     = -L"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib" -L"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/lib" -static-libgcc
+INCS     = -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include"
+CXXINCS  = -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include/c++"
+BIN      = Project1.exe
+CXXFLAGS = $(CXXINCS) 
+CFLAGS   = $(INCS) 
+RM       = rm.exe -f
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before $(BIN) all-after
+
+clean: clean-custom
+	${RM} $(OBJ) $(BIN)
+
+$(BIN): $(OBJ)
+	$(CC) $(LINKOBJ) -o $(BIN) $(LIBS)
+
+files/action.o: files/action.c
+	$(CC) -c files/action.c -o files/action.o $(CFLAGS)
+
+files/combat.o: files/combat.c
+	$(CC) -c files/combat.c -o files/combat.o $(CFLAGS)
+
+files/ending.o: files/ending.c
+	$(CC) -c files/ending.c -o files/ending.o $(CFLAGS)
+
+files/game.o: files/game.c
+	$(CC) -c files/game.c -o files/game.o $(CFLAGS)
+
+files/main.o: files/main.c
+	$(CC) -c files/main.c -o files/main.o $(CFLAGS)
+
+files/outcome.o: files/outcome.c
+	$(CC) -c files/outcome.c -o files/outcome.o $(CFLAGS)
+
+files/player.o: files/player.c
+	$(CC) -c files/player.c -o files/player.o $(CFLAGS)
+
+files/util.o: files/util.c
+	$(CC) -c files/util.c -o files/util.o $(CFLAGS)
