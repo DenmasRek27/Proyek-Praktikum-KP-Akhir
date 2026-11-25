@@ -7,6 +7,6 @@
 int main(void) {
     srand((unsigned)time(NULL));
     jalankanGame();
-    tungguEnter(); /* agar jendela Dev-C++ tidak langsung tertutup */
+    tungguEnter(); /* biar window tidak tertutup */
     return 0;
 }

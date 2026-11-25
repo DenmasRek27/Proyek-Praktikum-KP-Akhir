@@ -14,3 +14,41 @@ Di umur 0 tahun itu, kita tekan lanjut sampai umur 1... dimana setiap aksi di um
 4. Ya, kita bisa langsung tiru sistem combat undertale untuk saat ini dengan sedikit penyesuaian:, "Serang", "Aksi(negosiasi/bicara)", "Item",  (dan kalau kita yang nyergap, nanti akan ada "Kamu bertemu .... di ...., apa yang kamu mau lakukan?" dengan pilihan tambahan "Assasmen" untuk mendapat lebih banyak informasi yang berguna apakah(jika musuh: sedang terluka, sedang sakit // menjadi lebih mudah untuk diserang.. Jika netral/teman: sama.. ada juga informasi kalau apakah seorang trader sedang kesusahan menjual suatu barang [informasi tambahan untuk nego])... kau paham maksudku? ya... banyak sekali ide saya.
 
 5. Saya masih belum bisa memutuskan... enaknya kita buat setiap tahun bisa melakukan aksi, setiap tahun memberi(hari kerja) atau seperti apa.. ide awal saya ya 1 tahun ada 7 hari(5 kerja, 2 random).. yang itu memang bisa sampai. tapi rencana saya kalau bisa nanti ada sistem dimana kita bisa "fokus" satu hal dan kita bisa hanya perluh 1 aksi hari untuk lewat 1 tahun.. karena gk setiap tahun itu sama-sama sibuk semua(kadang ada yang memang tidak banyak terjadi).. jadi defaultnya 5(2 kerja, 2 random).. namun itu maks.. dan bisa berkurang sampai hanya 1 kerja, 1 random... kita bisa juga memotong untuk setiap step agar mengambil lebih dari 1 tahun.. jadi langsung lompat 2 - 3 tahun per step
+
+
+
+LANJUTTTTTT v3
+
+Alur Umur & Milestone (Hingga 100 Tahun~):
+- Mulai dari Umur 0 (tutorial, perkenalan game.. start screen)
+- Mulai dari umur 1 tahun, 3 aksi utama, 2 random. Umur lompat bertahap awal +5 sampai umur 16.. bertemu mini boss pertama.. Gamenya lepas (bantuan dan "welcome to the true game")
+- Dari umur 16.. Umur lompat bertahap naik dari +5 ke +10.
+- Di umur 46.. Bertemu dengan minibos kedua.. lalu diumur 86 bertemu dengan boss terakhir.
+- Lanjut dengan +10 lagi.. di umur 106, ending...
+
+Penamaan ulang istilah:
+Umur, 3 Hari (untuk aksi), 2 hari (untuk random). Dalam satu Hari itu, kita bisa "aktivitas" dengan menggunakan "energi".
+
+Manajemen Energi Harian:
+- Energi maksimal untuk umur 1 sampai 16 ialah 3 unit, lalu secara default akan naik ke 5 untuk umur selanjutnya.
+
+Biaya hidup, toko, dan equiptment:
+- Penambahan fitur toko sederhana yang menjual ramuan/item untuk crafting/jasa.
+- Jasa yang ditawarkan saat ini ialah "Membership Pelatihan" untuk menaikkan default "energi", naik 3 unit (seperti kalau saat ini 5, jadi 8)
+
+Ramuan(Potion):
+- Ramuan bisa dipakai baik saat aktivitas hari biasa atau dalam combat(melalui menu "items")
+- Ramuan saat ini ada 3 tipe, heal, buff damage(khusus untuk combat) dan buff karma(luck).
+
+Equiptment:
+- Equipment ialah barang yang perluh di crafting untuk mendapatkan bonus permanent.
+- Pembelian bahan pembuatan equiptment dihargai sewajarnya, satu equiptment butuh 3 bagian untuk dibuat, dan mereka dibuat di tempat khusus.
+- Equiptment (untuk sekarang) diantara lain: Pedang(menambah damage, untuk combat), Baju zirah(mengurangi damage masuk, untuk combat), amulet keberuntungan(memberikan sedikit bonus karma(luck)).
+
+Blacksmith:
+- Seperti toko, tapi hanya menjual jasa merakit equiptment dan meningkatkan efek dari equiptment itu.
+- Peningkatan efek equiptment dapat dilakukan dengan membayar, peningkatan efek yang didapat ada 3 level juga(total 4). Yaitu tanpa upgrade(level-0), level-1(naik sedikit), level-2(naik lumayan), level-3(naik signifikan).
+
+Catatan untuk equiptment: idenya disini kita tidak perluh mengumpulkan sebanyak-banyaknya equiptment(walau bisa), kita hanya perluh pilih satu dan pemain bisa mengandalkan beberapa dari semua pilihan.
+
+Yang belum ada: Special interaction event(nanti)
