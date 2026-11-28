@@ -52,3 +52,38 @@ Blacksmith:
 Catatan untuk equiptment: idenya disini kita tidak perluh mengumpulkan sebanyak-banyaknya equiptment(walau bisa), kita hanya perluh pilih satu dan pemain bisa mengandalkan beberapa dari semua pilihan.
 
 Yang belum ada: Special interaction event(nanti)
+
+
+LANJUT v4
+
+I have a request, make this a 2D game.. Images and sprites? Use ASCII art only! Interactible, imagine ballatro swipe and animation.
+
+Ideas.. Look at image for reference.
+
+For the majority of time, our adventure is like reading a book.. Our "story" is written, there's option that we can choose how to continue what.. Examples:
+
+"Aku sudah berumur XX, hari ini XX, cuaca cerah!(ini tergolong situasi yang akan diimplementasi lain kali), Pagi hari ini aku akan... <pilihan aksi>"
+
+Setelah memilih aksi, saat <hasil pilihan aksi tadi, contoh: Pergi ke hutan> aku akan... <pilihan aksi 2 relatif, seperti: Berburu... Menebang Pohon.. Mencari herbal"
+
+Pohon aksi akan menjadi lebar sekali, jadi perluh banyak aksi manual terkode sendiri untuk kita lakukan.
+
+
+Untuk sistem lain seperti combat, buat saja contoh referensi untuk sekarang, lalu untuk 2 hari random... Udah dari pure random menjadi ada dillema dengan kartu yang bisa kita geser kanan kiri untuk memilih bagaimana kita menannggapinya.. Contoh:
+
+"Diwaktu luangmu, kamu sedang bersantai di pesisir sungai.."
+
+Kartu aksi, pilihan 1.. "Aku menghabiskan waktu disini".
+
+Pilihan 2: "Aku memilih untuk kembali desa"
+
+Semua pilihan cerita disini bersifat first person perspektif.. Seperti kita menulis dalam buku diary tentang apa yang kita lakukan.
+
+Q: Game 2D ini dijalankan di mana?
+A: tetap di C, tapi kita bisa keluar dari terminal jika itu membatasi. Build windows yang bisa diinteraksi langsung(dengan mouse) akan bagus
+
+Q: Suasana tampilan utamanya seperti apa?
+A: halaman buku/diary, awalnya kosong..kita memulai dengan membuka buku, lalu animasi menulis seperti subtitle, menulis aksi yang kita lakukan
+
+Q: Cara memilih pada kartu?
+A: dalam setiap transisi aksi, halaman akan dilanjutkan, lalu kita 2 kartu akan ada terletak disana untuk kita pilih, kartu itu ada deskripsi aksi yang bisa kita pilih.. memilih satu kartu akan membuat kartu lain terisisih kan. bisa lebih dari 2 kartu.

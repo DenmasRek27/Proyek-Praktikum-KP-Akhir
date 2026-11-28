@@ -136,3 +136,142 @@ working-directory/
 ```
 
 Note the **flattening trend**: v1 grouped by `project/`, v2 used `files/`, v3 is flat with only the IDE folder separated. The `.o` files sitting next to sources in every version means the author builds in-place with Dev-C++ and commits the results; `make clean` was never run before committing.
+---
+
+## Key Abstractions
+
+### `Player` (struct)
+- **File**: `Game/V0.0.0.3/player.h` (lines 16–30)
+- **Responsibility**: The *entire* game state. There is no other persistent object.
+- **Interface**:
+  - `stat[4]` — Kesehatan / Mental / Kekayaan / Reputasi, always clamped `0..100` by `ubahStat()`
+  - `karma` — clamped `-50..50` by `ubahKarma()`; the only stat that can go negative
+  - `umur` — current age; drives energy tier, action unlocks, boss schedule
+  - `energi`, `energiMaks`, `bonusEnergi` — per-day budget; `energiMaks` is *recomputed* every day
+  - `ramuan[3]` — potion counts, indexed by `RAMUAN_HEAL/DMG/KARMA`
+  - `bahan[3]` — crafting materials, indexed by `EQ_PEDANG/ZIRAH/AMULET`
+  - `levelEq[3]` — **`-1` means "not yet crafted"**, `0..3` means owned at that upgrade level
+  - `buffDmg` — boolean-ish flag, cleared at the end of every encounter
+  - `buffKarma` — numeric bonus, cleared at the start of every day by `resetEnergiHarian()`
+- **Lifecycle**: created once on the stack in `jalankanGame()`, lives for the whole program, never written to disk.
+- **Used by**: literally everything. `player.h` is included by `game.h`, `action.h`, `combat.h`, `shop.h`, `ending.h`.
+
+### `Aksi` (work-activity descriptor table)
+- **File**: `Game/V0.0.0.3/action.c` (lines 10–25)
+- **Responsibility**: Data-driven definition of the six activities — name, `minUmur` gate, `biayaEnergi`, which stat it raises, and the health/mental costs to *attempt* it.
+- **Interface**: `static const Aksi DAFTAR_AKSI[JUMLAH_AKSI]`. Entries:
+  | Activity | min age | energy | raises | HP cost | Mental cost |
+  |---|---|---|---|---|---|
+  | Bermain & mengamati sekitar | 1 | 1 | Mental | 0 | 0 |
+  | Mengambil kayu & ranting | 4 | 1 | Kekayaan | 1 | 0 |
+  | Meramu herbal sederhana | 6 | 1 | Kesehatan | 0 | 1 |
+  | Bekerja di ladang | 8 | 2 | Kekayaan | 2 | 0 |
+  | Bergaul di desa | 8 | 1 | Reputasi | 0 | 1 |
+  | Berburu di hutan | 12 | 3 | Kekayaan | 3 | 1 |
+- **Lifecycle**: compile-time constant; never mutated.
+- **Used by**: `jalankanAksiKerja()` builds a filtered index array `indeksAksi[]` of currently available entries, then maps the player's menu choice back through it.
+
+### `tentukanOutcome()` (the game's single die)
+- **File**: `Game/V0.0.0.3/outcome.c` (lines 11–19)
+- **Responsibility**: Turn `(karma, bonus)` into one of five `Outcome` values. Every uncertain event in the game — work, free time, negotiation, escape — funnels through this one function.
+- **Interface**:
+  ```c
+  int r = acak(0, 99) - karma / 5 - bonus - 20;
+  r < 15 → SANGAT_UNTUNG   (delta +10)
+  r < 60 → UNTUNG          (delta  +5)
+  r < 80 → NETRAL          (delta   0)
+  r < 90 → RUGI            (delta  -4)
+  else   → SANGAT_RUGI     (delta  -8)
+  ```
+- **Design intent**: the `-20` and the wide `+10/+5` bands make the baseline **generous** — at Karma 0 the player has a 35 % chance of a great result and 0 % chance of a loss. Karma is a *tilt*, not a gate.
+- **Non-obvious**: `karma / 5` is **integer division truncating toward zero**, so `karma = -4` contributes 0, not −0.8; the luck penalty is slightly asymmetric (positive Karma is worth marginally more than the equivalent negative Karma hurts). Also see "Dead code" below — `SANGAT_RUGI` is in practice unreachable.
+
+### `Target` (combat entity)
+- **File**: `Game/V0.0.0.3/combat.c` (lines 8–15) — **private to `combat.c`**, not in the header
+- **Responsibility**: A single encounter's opponent: `nama[24]`, `jenis` (`MUSUH` / `PEDAGANG` / `BOSS`), hidden `kondisi` (`NORMAL` / `TERLUKA` / `SAKIT` / `KESULITAN`), `hp`, `kekuatan`.
+- **Lifecycle**: stack-local inside `mulaiEncounter()` / `mulaiBoss()`, destroyed when the fight ends. Nothing persists.
+- **Notable**: the *condition* is generated at spawn but is **invisible to the player until they spend a turn on Assessment** (`assessed` flag). That flag also enables a **+6 damage bonus** on wounded/sick enemies and a **+20 outcome bonus** / **+5 wealth** when negotiating with a struggling merchant.
+
+### `Ending` (enum)
+- **File**: `Game/V0.0.0.3/ending.h` (lines 7–17)
+- **Responsibility**: Single source of truth for "is the run over and how". `ENDING_NONE` is the loop sentinel, so fail/win checks return a `Ending` that *is* the control signal.
+- **Interface**:
+  - `cekGagal(p)` — called **every day**; returns a fail ending if any of HP / Mental / Kekayaan `<= 0`
+  - `cekMenang(p)` — called **once per year**; no-op below age 106, otherwise tiers: Komunitas (Rep ≥ 65, others ≥ 40) → Mandiri (all stats ≥ 55) → Bertahan (fallback)
+  - `tampilEnding(e)` — prints the epilogue prose
+- **Used by**: `game.c`, which uses `e != ENDING_NONE` as the loop exit condition.
+
+### The `bayar()` invariant
+- **File**: `Game/V0.0.0.3/shop.c` (lines 17–21)
+- **Responsibility**: A deliberate guard — `if (p->stat[STAT_KEKAYAAN] <= harga)` refuses the purchase.
+- **Why**: because `Kekayaan == 0` is an **instant game-over** (`ENDING_GAGAL_MISKIN`), spending your last coin would silently kill the player from inside a shop menu. `bayar()` therefore makes it *impossible* to buy something that would leave you at 0 wealth. Pay attention to the strictness: even buying at *exactly* your remaining wealth is refused.
+
+---
+
+## Data Flow
+
+### A. App start → first playable year
+1. `main()` seeds `rand()` with `time(NULL)` and calls `jalankanGame()`.
+2. `inisialisasiPlayer()` zeroes the struct, sets `levelEq[i] = -1`, stats `70/60/30/20`, energy `3/3`.
+3. `prolog()` clears the screen, prints the tutorial (stat ranges, day structure, age leaps, boss ages, the five outcome grades, fail conditions), waits for a single keypress.
+4. `umur = 1`; the `while (e == ENDING_NONE)` loop begins.
+
+### B. One Action Day (repeated 3× per year)
+1. `resetEnergiHarian()` → `energiMaks = (umur <= 16 ? 3 : 5) + bonusEnergi`, refills `energi`, zeroes `buffKarma`.
+2. Screen banner `######## UMUR n | Hari Aksi i/3 ########`, then `while (p->energi > 0)`:
+3. `tampilStatus()` prints the stat block and potion counts.
+4. `jalankanAksiKerja()` prints the filtered activity menu plus **Toko / Pandai Besi / Pakai Ramuan / Akhiri hari**. Only activities you can afford are selectable; an unaffordable pick loops back with a message.
+5. On confirmation, the cost is paid (`pakaiEnergi`, HP cost, Mental cost), then `tentukanOutcome(karmaEfektif(p), 0)` is rolled and applied to the activity's main stat.
+6. Post-action hooks, in order:
+   - `indeksAsli == 1` (gather wood) and `acak(1,100) <= 45` → **`subEventHewanTerperangkap()`**: a trapped-animal choice. Helping costs 1 energy, grants **+5 Karma**, then rolls with **`bonus = +10`** for loot (1 potion + 4 Mental) / consolation (+3 Mental) / bite (−4 HP).
+   - `indeksAsli == 2` (herbalism) and a favourable outcome → `+1 Ramuan Penyembuh`.
+   - outcome `== SANGAT_RUGI` and `umur >= 8` → **forced encounter** (`mulaiEncounter`) — *see the dead-code note: this cannot currently fire.*
+7. `cekGagal()` after every action; a fail ending aborts the whole game immediately, mid-day.
+8. "Akhiri hari" returns 1 and breaks the energy loop.
+
+### C. One Random Day (repeated 2× per year)
+1. `resetEnergiHarian()` again (yes — energy refills, but Random Days don't consume it unless a fight begins).
+2. `jalankanWaktuLuang()`: if `umur >= 8` and a 50 % roll hits, the day becomes an **encounter** and returns immediately. Otherwise a random stat (any of the four) is nudged by the outcome delta of a single roll.
+
+### D. A combat encounter
+1. `mulaiEncounter()` → `buatTarget()`: 60 % monster (3 species, HP 25–40, str 3–6, 1/3 chance of being *terluka* which **halves HP**, 1/3 *sakit*), 40 % merchant (HP 20, str 0, 2/3 *kesulitan*).
+2. Banner: `Kamu bertemu <nama> di <hutan|jalan desa|tepi sungai|gerbang kota>, apa yang kamu mau lakukan?`
+3. `jalankanEncounter()` menu loop: **1 Serang, 2 Aksi (Negosiasi/Bicara), 3 Item (Ramuan), 4 Assessment, 5 Kabur**.
+   - *Serang* on a merchant = robbery: `Kekayaan +8`, `Reputasi −10`, `Karma −10`, fight ends instantly.
+   - *Serang* on a monster = `acak(8,14) + efekEq(Pedang) + (buffDmg ? 6 : 0)`, **+6** if `assessed` and wounded/sick. Kill grants `Kekayaan +5`, `Reputasi +3`.
+   - *Negosiasi* on a merchant always resolves the fight; wealth changes by `deltaOutcome ± 5`. On a monster, a favourable roll makes it leave (`Reputasi +2`, `Karma +2`) but a bad roll **wastes the turn**.
+   - *Item* → `pakaiRamuan(p, 1)`; a cancelled potion does **not** consume the turn.
+   - *Assessment* → sets `assessed`, prints the hidden condition; re-assessing is refused.
+   - *Kabur* → merchants and (implicitly) nothing else let you walk away; success on monsters needs `<= NETRAL`; always fails on bosses.
+4. If the fight is not over and the target isn't a merchant, `giliranMusuh()` hits for `kekuatan + acak(0,3) − efekEq(Zirah)`, clamped to a minimum of 1.
+5. On exit, `p->buffDmg = 0`.
+
+### E. Boss fight (ages 16, 46, 86)
+`mulaiBoss(p, tingkat)` builds a `TARGET_BOSS` with fixed stats — **Alfa Serigala 70 HP / 6 str**, **Kepala Bandit 130 HP / 9 str**, **Naga Perbatasan 200 HP / 13 str** — prints `Tidak ada jalan kabur`, and runs the same encounter loop. Escape and negotiation are functionally disabled, so the loop only terminates on boss death or player death. Victory awards `Reputasi +10`, `Kekayaan +10`.
+
+### F. End of year → next year
+1. Living costs: `Kekayaan −3`, then `Kesehatan +10` (recovery, clamped at 100).
+2. `cekGagal()` — so the living-cost deduction can *itself* be the thing that kills you.
+3. Back in `jalankanGame()`: `umur += tentukanLompatan()` (`+5` while `umur < 16`, else `+10`), then `cekMenang()` (no-op until 106).
+
+Resulting age sequence: **1 → 6 → 11 → 16 → 26 → 36 → 46 → 56 → 66 → 76 → 86 → 96 → 106** — thirteen playable years, each a full 3+2 day cycle. A complete run is roughly 13 × 7 ≈ 90 menu resolutions plus fights.
+
+---
+
+## Non-Obvious Behaviors & Design Decisions
+
+- **`OUT_SANGAT_RUGI` is unreachable — and it gates a feature.** From `outcome.c`, `r = acak(0,99) − karma/5 − bonus − 20`. The maximum possible `r` occurs at `acak = 99`, `karma = −50` (its clamp floor), `bonus = 0`: `99 + 10 − 20 = 89`, which maps to `OUT_RUGI`, not `OUT_SANGAT_RUGI` (needs `r ≥ 90`). Consequence: the branch in `action.c` — `if (o == OUT_SANGAT_RUGI && p->umur >= 8) mulaiEncounter(p);` — **can never execute**. The "something disturbs your work" ambush is dead code. The only live encounter path is the 50 % free-time roll in `jalankanWaktuLuang()`. This is the single most likely thing to confuse someone reading `action.c`: the code reads as though failure spawns fights, but it doesn't.
+- **The dice are biased in the player's favour by design, then swung by Karma.** The `−20` shift plus bands `[0,15)/[15,60)/[60,80)/[80,90)/[90,100)` mean: Karma 0 → 35 % great / 45 % good / 20 % neutral / **0 % bad**. Karma +50 → 45 % great. Karma −50 → still only 10 % bad. A developer "fixing" the `−20` would destroy the game's difficulty curve entirely.
+- **`levelEq = -1` is a sentinel, not a level.** `efekEq()` returns `0` for negative values; `bukaPandaiBesi()` treats `lv < 0` as "craft", `0..2` as "upgrade", `3` as "maxed". Every new equipment array init must respect this or the "Rakit" menu silently becomes an "upgrade Lv-1" bug.
+- **Two different buff lifetimes.** `buffKarma` is cleared by `resetEnergiHarian()`, i.e. it expires at **dawn of the next day** — so a Karma potion bought at the end of an Action Day is nearly wasted. `buffDmg` is cleared at the **end of the encounter**, so it lasts the whole fight. `pakaiRamuan()`'s `combat` parameter is what stops the damage potion being drunk outside fights.
+- **`energiMaks` is derived, never authoritative.** `resetEnergiHarian()` recomputes it from `umur` and `bonusEnergi` every day. Any code that mutates `energiMaks` directly is overwritten at the next day boundary. The membership bonus therefore only "appears" the following day — the shop text says exactly that ("mulai hari berikutnya").
+- **Three independent kill switches.** Each day, `cekGagal()` checks HP ≤ 0, Mental ≤ 0, and Kekayaan ≤ 0. But Kekayaan also drains by 3 per year automatically, so the economic fail-state is a slow clock rather than an event: at starting wealth 30 you have ~10 years of runway unless you work. Meanwhile `bayar()` prevents *self-inflicted* bankruptcy in shops.
+- **Boss victory is inferred from the player's health, not the boss's.** `mulaiBoss()` prints `Kamu mengalahkan %s!` when `p->stat[STAT_KESEHATAN] > 0` after the loop. This is correct only because the encounter loop cannot exit otherwise (no escape, no negotiation, boss keeps fighting until dead), but it is fragile: adding a non-lethal exit would silently hand out boss rewards.
+- **Health is both a resource and a clock.** Actions cost HP on *attempt* (`biayaKes`) regardless of outcome, combat costs HP, but every year grants `+10` HP back (capped at 100). So maximising long-term survival means ending each year with low HP so the +10 isn't wasted — an emergent optimisation the tutorial never mentions.
+- **Final-boss maths is extremely tight.** Naga: 200 HP, 13 str (+0..3). With Amulet/Zirah maxed you reduce incoming to `13+d3−5` ≈ 8–11 per turn. Player output is `acak(8,14) + 12` (Pedang Lv3) ≈ 20–26. That's ~9 turns to kill vs ~11 turns to die from 100 HP — i.e. **the age‑86 fight is effectively gated on having both Pedang and Zirah crafted and near-maxed**, which costs hundreds of Kekayaan. The game's real difficulty is therefore economic, not tactical.
+- **`system("cls")` is the only platform-specific code**, behind `#ifdef _WIN32`. Everything else is portable standard C.
+- **Input hardening is minimal but real**: `bacaAngka()` reads a line with `fgets` + `sscanf`, re-prompts on garbage or out-of-range, and `exit(0)` on EOF — so piping the program's stdin causes a silent clean exit rather than an infinite loop.
+- **No save/load, no seeds, no replay.** `rand()` is seeded from wall-clock time; runs are unreproducible. This is a real limitation for a graded practicum project: there is no way to demonstrate the same run twice.
+- **`(void)p;` in v2's `tentukanLompatan`** is a marker of the evolution — v2 advanced one year at a time (a very long game), v3 changed one line into the `+5/+10` leap and turned the same program into a ~15-minute session. That single function is the whole pacing design.
+- **v2's `UMUR_MIN_MENANG 5`** versus v3's `106` shows the author used the win condition as a **debug shortcut** during development, then changed it back. Anyone running v2 will "win" almost instantly — that is not a bug in v2, it's a test stub left in.
+- **The ideas file is a spec, not documentation.** Where the implementation differs from it (e.g. the spec says Random Days are where stats rise *and* encounters happen; the code makes single random days mutually exclusive — either an encounter *or* a stat nudge), the code is the source of truth, but the ideas file is what tells you *why* each system exists.
