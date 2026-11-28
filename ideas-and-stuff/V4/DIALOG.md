@@ -1,7 +1,3 @@
-Berikut adalah **55 Aktivitas Spesial (Branch)** yang disesuaikan dengan sistem umur di game (*Umur 1, 6, 11, 16, 26, 36, 46, 56, 66, 76, 86, 96*) dengan nuansa dunia kerajaan, pedang, dan sihir bergaya anime/medieval.
-
-Setiap aktivitas terdiri dari **Cabang Pemicu (Level 1)** dan minimal **2 Pilihan Aksi Lanjutan (Level 2)** lengkap dengan stat/efek yang mengikuti mekanik game (*Kesehatan, Mental, Emas, Reputasi, Karma, Loot, atau Trigger Combat*).
-
 ### Fase Anak-Anak (Umur 1 & 6)
 
 Fokus pada eksplorasi awal, pembentukan karakter, dan pemicu bakat dasar.
