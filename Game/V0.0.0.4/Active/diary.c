@@ -1,59 +1,132 @@
-/* Antarmuka buku diary (Win32 GDI, tanpa library tambahan).
- * Build: gcc diary.c player.c ending.c util.c -o diary.exe -lgdi32 -mwindows
- * Pakai ulang Player/ubahStat/cekGagal/cekMenang dari proyek lama. */
+/* Kisah di Tanah Perbatasan - antarmuka buku diary (Win32 GDI, tanpa library tambahan).
+ * Build: gcc diary.c player.c ending.c outcome.c util.c -o diary.exe -lgdi32 -mwindows
+ * Pakai ulang Player/ubahStat/cekGagal/cekMenang/tentukanOutcome dari proyek lama. */
 #include <windows.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <time.h>
 #include "player.h"
 #include "ending.h"
+#include "outcome.h"
+#include "util.h"
 
 #define W 900
 #define H 640
-#define CW 220
-#define CH 130
-#define CARD_Y 450
-#define PAGE_MAX 380          /* lewat ini, halaman dibalik */
-#define N_AUTO (-1)           /* next = maju ke hari berikutnya */
+#define CH 150                 /* tinggi kartu */
+#define GAP 16
+#define CARD_Y 440
+#define PAGE_MAX 300           /* lewat ini, halaman dibalik */
+#define MAXOPT 10
+#define MAXV 5                 /* kartu terlihat sekaligus */
 #define NO_STAT (-1)
+#define BIAYA_HIDUP 3
+#define PEMULIHAN_TAHUNAN 10
+#define BONUS_RISIKO (-15)     /* aksi berisiko: peluang untung turun ke ~65% */
+#define NE { NO_STAT, 0, 0 }
+#define INK RGB(50, 35, 25)
 
-enum { N_PAGI, N_HUTAN, N_BURU, N_SERIGALA, N_KAYU, N_HERBAL, N_DESA, N_LUANG };
+#define HARGA_BAHAN 5
+#define HARGA_MEMBERSHIP 40
+#define HARGA_RAKIT 10
+#define BAHAN_PER_EQ 3
+
+enum { BG_PERBATASAN, BG_HUTAN, BG_DESA, BG_SUNGAI, BG_TEMPAAN, BG_BAHAYA };
+enum { VIBE_TENANG, VIBE_KERJA, VIBE_WASPADA, VIBE_TARUNG, VIBE_BERKAH, VIBE_LAIN };
+enum { SC_PAGI, SC_HUTAN, SC_HEWAN, SC_SUNGAI, SC_PENGEMBARA, SC_PASAR,
+       SC_TOKO, SC_TEMPA, SC_RAMUAN, SC_COMBAT, SC_PROLOG };
+enum { M_NORMAL, M_RISK, M_BRANCH };
 enum { PH_COVER, PH_OPEN, PH_TYPE, PH_CARDS, PH_PICK, PH_END };
+enum { K_NORMAL, K_TERLUKA, K_SAKIT, K_KESULITAN };
+enum { NX_AFTER = -1, NX_DONE = -2 };   /* hasil step(): selain id scene */
+/* id opsi >= 100 = opsi khusus (bukan baris ACTS) */
+enum { SP_LANJUT = 100, SP_PASAR_TOKO, SP_PASAR_TEMPA, SP_PASAR_KELUAR,
+       SP_TOKO_KELUAR, SP_TEMPA_KELUAR, SP_RAMUAN_BATAL,
+       SP_C_SERANG = 110, SP_C_AKSI, SP_C_ASESMEN, SP_C_KABUR, SP_C_ITEM,
+       SP_BELI = 120,      /* +0..6: 3 ramuan, 3 bahan, membership */
+       SP_TEMPA = 130,     /* +0..2: equipment */
+       SP_PAKAI = 140 };   /* +0..2: ramuan */
 
-typedef struct { const char *label; int stat, delta, next; } Choice;
-typedef struct { const char *art, *text; int n; Choice c[3]; } Node;
+/* ---------- Data ---------- */
+typedef struct { int stat, lo, hi; } Eff;   /* efek skala outcome: lo (buruk) .. hi (bagus) */
+typedef struct {
+    int scene, minAge, energy, bg, vibe, mode;
+    const char *label;       /* L1: lanjutan "aku akan..."; lainnya: kalimat "Aku ..." */
+    Eff e[2];                /* efek bila normal/sukses */
+    Eff bad[2];              /* efek tetap bila M_RISK gagal */
+    int karma, loot, enc, sub, next;   /* loot: 1=ramuan, 2=ramuan/bahan; enc,sub: peluang % */
+} Act;
 
-/* Pohon aksi: tambah node di sini. Label = lanjutan kalimat orang pertama. */
-static const Node NODES[] = {
- /* PAGI */ { "    \\ | /\n  -- ( ) --\n    / | \\\n\n ~~~~~~~~~~~", "Pagi ini aku akan...", 3, {
-   { "pergi ke hutan.", NO_STAT, 0, N_HUTAN },
-   { "turun ke desa.", NO_STAT, 0, N_DESA },
-   { "bermain dan mengamati sekitar.", STAT_MENTAL, 3, N_AUTO } } },
- /* HUTAN */ { "   ^    ^^\n  /|\\  /||\\\n /_|_\\/_||_\\\n   |    ||", "Pepohonan di sini rapat dan sunyi. Aku akan...", 3, {
-   { "berburu.", NO_STAT, 0, N_BURU },
-   { "menebang pohon.", NO_STAT, 0, N_KAYU },
-   { "mencari herbal.", NO_STAT, 0, N_HERBAL } } },
- /* BURU */ { "  /\\_/\\\n ( o.o )\n  > ^ <", "Ada jejak segar di tanah lembap. Aku akan...", 3, {
-   { "mengikutinya pelan-pelan.", STAT_KEKAYAAN, 6, N_AUTO },
-   { "memasang jerat lalu menunggu.", STAT_KEKAYAAN, 3, N_AUTO },
-   { "menoleh, ada geraman di semak.", NO_STAT, 0, N_SERIGALA } } },
- /* SERIGALA (contoh combat, masih placeholder) */ { "  |\\___/|\n  ( o o )\n  /  v  \\", "Seekor serigala lapar muncul dari semak. Aku akan...", 2, {
-   { "melawannya dengan tongkat.", STAT_KESEHATAN, -6, N_AUTO },
-   { "mundur perlahan sambil menatapnya.", STAT_MENTAL, -2, N_AUTO } } },
- /* KAYU */ { "    ||\n   /||\\\n  / || \\", "Di tepi hutan banyak kayu. Aku akan...", 2, {
-   { "mengumpulkan ranting kering.", STAT_KEKAYAAN, 2, N_AUTO },
-   { "menebang pohon muda.", STAT_KEKAYAAN, 5, N_AUTO } } },
- /* HERBAL */ { "   \\|/\n  --*--\n   /|\\", "Aroma daun liar tercium. Aku akan...", 2, {
-   { "memetik secukupnya.", STAT_KESEHATAN, 5, N_AUTO },
-   { "membawa pulang sebanyak mungkin.", STAT_KEKAYAAN, 4, N_AUTO } } },
- /* DESA */ { "   /\\    /\\\n  /__\\  /__\\\n  |[]|  |[]|", "Desa ramai pagi ini. Aku akan...", 3, {
-   { "menyapa para warga.", STAT_REPUTASI, 4, N_AUTO },
-   { "membantu di ladang.", STAT_KEKAYAAN, 4, N_AUTO },
-   { "hanya lewat sambil mengamati.", STAT_MENTAL, 2, N_AUTO } } },
- /* LUANG (hari acak: dilema kartu) */ { " ~ ~ ~ ~ ~ ~\n  ~ ~ ~ ~ ~ ~\n ~ ~ ~ ~ ~ ~", "Di waktu luangku, aku sedang bersantai di pesisir sungai.", 2, {
-   { "Aku menghabiskan waktu di sini.", STAT_MENTAL, 5, N_AUTO },
-   { "Aku memilih untuk kembali ke desa.", STAT_REPUTASI, 3, N_AUTO } } },
+/* Pohon aksi: tambah baris di sini. Layar yang memuat aksi = kolom scene. */
+static const Act ACTS[] = {
+ /* ---- Level-1: pagi hari ---- */
+ { SC_PAGI, 1, 1, BG_PERBATASAN, VIBE_TENANG, M_NORMAL, "mengamati sekitar tepi hutan yang masih asing bagiku.",
+   { { STAT_MENTAL, 2, 6 }, NE }, { NE, NE }, 0, 0, 0, 0, 0 },
+ { SC_PAGI, 4, 2, BG_HUTAN, VIBE_WASPADA, M_BRANCH, "melangkah masuk ke dalam hutan lebat.",
+   { NE, NE }, { NE, NE }, 0, 0, 0, 0, SC_HUTAN },
+ { SC_PAGI, 6, 2, BG_DESA, VIBE_KERJA, M_NORMAL, "bekerja di ladang demi menambah gram emas.",
+   { { STAT_KEKAYAAN, 4, 10 }, { STAT_KESEHATAN, -2, -2 } }, { NE, NE }, 0, 0, 0, 0, 0 },
+ { SC_PAGI, 6, 1, BG_DESA, VIBE_TENANG, M_NORMAL, "bergaul dengan warga desa dan mendengar kabar sekitar.",
+   { { STAT_REPUTASI, 4, 9 }, { STAT_MENTAL, 1, 3 } }, { NE, NE }, 0, 0, 0, 0, 0 },
+ { SC_PAGI, 11, 1, BG_TEMPAAN, VIBE_KERJA, M_BRANCH, "mampir ke pasar dan bengkel pandai besi.",
+   { NE, NE }, { NE, NE }, 0, 0, 0, 0, SC_PASAR },
+ { SC_PAGI, 1, 0, -1, VIBE_BERKAH, M_BRANCH, "membuka tas kecilku dan meneguk ramuan yang kusimpan.",
+   { NE, NE }, { NE, NE }, 0, 0, 0, 0, SC_RAMUAN },
+ /* ---- Level-2: di dalam hutan ---- */
+ { SC_HUTAN, 4, 1, BG_HUTAN, VIBE_KERJA, M_NORMAL, "Aku memilih mengumpulkan ranting dan kayu ringan yang mudah dijangkau.",
+   { { STAT_KEKAYAAN, 3, 6 }, { STAT_KESEHATAN, -1, -1 } }, { NE, NE }, 0, 0, 0, 45, 0 },
+ { SC_HUTAN, 11, 2, BG_HUTAN, VIBE_WASPADA, M_RISK, "Aku nekat menebang kayu tua di lereng curam demi hasil jauh lebih besar.",
+   { { STAT_KEKAYAAN, 8, 15 }, NE }, { { STAT_KESEHATAN, -6, -6 }, { STAT_MENTAL, -3, -3 } }, 0, 0, 0, 25, 0 },
+ { SC_HUTAN, 6, 1, BG_HUTAN, VIBE_TENANG, M_NORMAL, "Aku menyusuri semak aman dekat jalan setapak untuk mencari tanaman obat.",
+   { { STAT_KESEHATAN, 2, 5 }, NE }, { NE, NE }, 0, 1, 0, 0, 0 },
+ { SC_HUTAN, 12, 2, BG_HUTAN, VIBE_BERKAH, M_RISK, "Aku menerobos rawa berkabut demi mencari herbal langka.",
+   { NE, NE }, { { STAT_KESEHATAN, -5, -5 }, { STAT_MENTAL, -4, -4 } }, 0, 2, 0, 0, 0 },
+ { SC_HUTAN, 12, 2, BG_HUTAN, VIBE_TARUNG, M_NORMAL, "Aku menelusuri jejak buruan dengan langkah senyap di balik pepohonan.",
+   { { STAT_KEKAYAAN, 6, 14 }, { STAT_KESEHATAN, -3, -3 } }, { NE, NE }, 0, 0, 30, 0, 0 },
+ /* ---- Sub-kejadian: hewan terperangkap ---- */
+ { SC_HEWAN, 1, 2, BG_HUTAN, VIBE_BERKAH, M_RISK, "Aku mencoba melepaskannya.",
+   { { STAT_KEKAYAAN, 4, 4 }, NE }, { { STAT_KESEHATAN, -4, -4 }, NE }, 5, 1, 0, 0, 0 },
+ { SC_HEWAN, 1, 0, BG_HUTAN, VIBE_WASPADA, M_NORMAL, "Aku tak punya waktu maupun tenaga untuk mengurusnya. Aku melangkah pergi.",
+   { NE, NE }, { NE, NE }, 0, 0, 0, 0, 0 },
+ /* ---- Hari random: kartu dilema ---- */
+ { SC_SUNGAI, 1, 0, BG_SUNGAI, VIBE_TENANG, M_NORMAL, "Aku menghabiskan waktu di sini, memandangi arus sungai.",
+   { { STAT_MENTAL, 5, 5 }, NE }, { NE, NE }, 2, 0, 0, 0, 0 },
+ { SC_SUNGAI, 1, 0, BG_DESA, VIBE_TENANG, M_NORMAL, "Aku memilih untuk kembali ke desa sebelum senja.",
+   { { STAT_REPUTASI, 3, 3 }, NE }, { NE, NE }, 0, 0, 0, 0, 0 },
+ { SC_PENGEMBARA, 1, 0, BG_DESA, VIBE_WASPADA, M_RISK, "Aku mendekat dan menyapanya dengan ramah.",
+   { { STAT_REPUTASI, 5, 5 }, NE }, { { STAT_MENTAL, -4, -4 }, NE }, 0, 0, 0, 0, 0 },
+ { SC_PENGEMBARA, 1, 0, BG_DESA, VIBE_TENANG, M_NORMAL, "Aku menjaga jarak dan berlalu diam-diam.",
+   { { STAT_MENTAL, 2, 2 }, NE }, { NE, NE }, 0, 0, 0, 0, 0 },
+};
+#define NACT ((int)(sizeof ACTS / sizeof ACTS[0]))
+
+/* background default tiap scene (-1 = pertahankan) */
+static const int SCN_BG[] = { -1, BG_HUTAN, BG_HUTAN, BG_SUNGAI, BG_DESA, BG_TEMPAAN,
+                              BG_TEMPAAN, BG_TEMPAAN, -1, BG_BAHAYA, BG_PERBATASAN };
+static const COLORREF BG_DESK[]  = { RGB(46,52,58), RGB(22,40,26), RGB(62,44,26),
+                                     RGB(22,44,60), RGB(60,24,14), RGB(20,12,14) };
+static const COLORREF BG_PAPER[] = { RGB(236,232,216), RGB(226,230,196), RGB(242,226,186),
+                                     RGB(226,238,236), RGB(242,218,182), RGB(214,198,190) };
+
+/* coretan sisi halaman per lokasi */
+static const char *BG_ART[] = {
+ " ~ ~  ^   ~ ~\n  ~  /|\\   ~\n ~~ /_|_\\ ~~\n  ~~  |  ~~\n ~ ~  |   ~",
+ "   ^    ^^\n  /|\\  /||\\\n /_|_\\/_||_\\\n   |    ||",
+ "  /\\    /\\\n /__\\  /__\\\n |[]|  |[]|\n ============",
+ " ~ ~ ~ ~ ~ ~\n  ~ ~ ~ ~ ~ ~\n ~ ~ o ~ ~ ~\n  ~ ~ ~ ~ ~ ~",
+ "   _____    *\n  /_____\\ ! *\n [#######] *\n |_______|\n   ~^^^~",
+ " \\  !  /\n  \\ ! /\n --  X --\n  / ! \\\n /  !  \\"
+};
+/* coretan kartu per vibes */
+static const char *VIBE_ART[] = {
+ " ~ ~ ~\n  * ~ *",
+ "[#] / \\\n=== ===",
+ "o_o >>>\n  . . .",
+ " /X\\  !\n!  X  !",
+ " + * +\n * + *",
+ " . . .\n >> >>"
 };
 
 static const char *END_TXT[] = { "",
@@ -64,95 +137,502 @@ static const char *END_TXT[] = { "",
   "Aku menemukan tempat di tengah komunitas. Menjadi rakyat biasa.",
   "Aku mencapai umur 106. Hidup panjang, meski tak menonjol." };
 
-typedef struct { float x, y, a, tx, ty, ta; } Card;
+static const char *LBL[JUMLAH_STAT] = { "Kesehatan", "Mental", "emas", "Reputasi" };
+static const char *RAM_L[JUMLAH_RAMUAN] = { "ramuan penyembuh", "ramuan kekuatan", "ramuan keberuntungan" };
+static const char *NAMA_BAHAN[JUMLAH_EQ] = { "Bijih Besi", "Kulit Keras", "Batu Permata" };
+static const int HARGA_RAMUAN[JUMLAH_RAMUAN] = { 6, 8, 8 };
+static const int HARGA_UPGRADE[3] = { 15, 30, 50 };
+static const char *LOKASI[4] = { "hutan", "jalan desa", "tepi sungai", "gerbang kota" };
+static const char *MUSUH_NAMA[3] = { "Serigala Lapar", "Bandit Jalanan", "Beruang Hutan" };
+static const char *BOSS_NAMA[3] = { "Penjaga Perbatasan", "Penguasa Reruntuhan", "Bayangan Abadi" };
+static const int BOSS_HP[3] = { 70, 130, 200 }, BOSS_KUAT[3] = { 6, 9, 13 };
+static const char *KONDISI_TXT[4] = { "tampak sehat dan tidak terburu-buru.", "memiliki luka terbuka, geraknya melambat.",
+    "terbatuk dan lemas, jelas sedang sakit.", "kesulitan menjual dagangannya dan butuh pembeli." };
+
+/* ---------- State ---------- */
+typedef struct { char label[100]; int vibe, id; } Opt;
+typedef struct { char nama[24]; int pedagang, boss, tier, kondisi, hp, kuat; } Target;
+typedef struct { float x, y, a, tx, ty, ta; const char *txt; int vibe, opt; } Card;
 
 static Player pl;
-static int hari = 1, node, phase = PH_COVER, ncd, hover = -1, chosen = -1;
-static char page[1400];
-static int plen, shown;
-static float acc, openT;
-static const char *art = "";
-static Card cd[3];
-static HFONT fText, fArt, fCard;
+static Target tg;
+static Opt opts[MAXOPT];
+static Card cd[MAXV];
+static char page[1400], note[160];
+static int plen, shown, nopt, optPage, ncd, ccw, hover = -1, chosen = -1;
+static int phase = PH_COVER, scene, bg = BG_PERBATASAN, hari = 1;
+static int dayFresh, bossDone, assessed, ramuanBack, lastMx = -1, lastMy = -1;
+static float acc, openT, cDesk[3], cPaper[3];
+static HFONT fText, fCard, fArt, fDood;
 
+static void enterScene(int sc, int quiet);
+static void afterAction(void);
+static void startCombat(int boss);
+
+/* ---------- Teks halaman ---------- */
+/* Kalimat baru: balik halaman bila penuh. */
+static void say(const char *fmt, ...) {
+    char b[400], *s = b;
+    va_list ap;
+    va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
+    if (plen + (int)strlen(b) > PAGE_MAX) { page[0] = 0; plen = shown = 0; }
+    if (!plen && *s == '\n') s++;                 /* halaman baru: tanpa baris kosong di awal */
+    strcat(page, s);
+    plen = (int)strlen(page);
+}
+
+/* Lanjutan kalimat yang sama (label kartu): tidak membalik halaman. */
+static void add(const char *fmt, ...) {
+    char b[200];
+    va_list ap;
+    va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
+    strncat(page, b, sizeof page - strlen(page) - 1);
+    plen = (int)strlen(page);
+}
+
+static void noteAdd(const char *fmt, ...) {
+    char b[48];
+    size_t n = strlen(note);
+    va_list ap;
+    va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
+    snprintf(note + n, sizeof note - n, "%s%s", n ? ", " : "", b);
+}
+
+static void chg(int st, int d) {                  /* ubah stat + catat untuk baris hasil */
+    if (st == NO_STAT || !d) return;
+    ubahStat(&pl, st, d);
+    noteAdd("%s %+d", LBL[st], d);
+}
+
+static int bayar(int harga) {                     /* belanja tidak boleh membuat emas 0 (= gagal) */
+    if (pl.stat[STAT_KEKAYAAN] <= harga) { say("\nGram emasku tidak cukup."); return 0; }
+    ubahStat(&pl, STAT_KEKAYAAN, -harga);
+    return 1;
+}
+
+/* ---------- Aksi ---------- */
+static int punyaRamuan(int combat) {
+    return pl.ramuan[RAMUAN_HEAL] + pl.ramuan[RAMUAN_KARMA] + (combat ? pl.ramuan[RAMUAN_DMG] : 0) > 0;
+}
+
+static int minEnergi(int sc) {                    /* aksi termurah di scene lanjutan */
+    int i, m = 99;
+    for (i = 0; i < NACT; i++)
+        if (ACTS[i].scene == sc && pl.umur >= ACTS[i].minAge && ACTS[i].energy < m) m = ACTS[i].energy;
+    return m == 99 ? 0 : m;
+}
+
+static int muncul(const Act *a) {
+    if (pl.umur < a->minAge) return 0;
+    if (a->next == SC_RAMUAN && !punyaRamuan(0)) return 0;
+    return pl.energi >= a->energy + (a->mode == M_BRANCH ? minEnergi(a->next) : 0);
+}
+
+static int adaAksi(void) {                        /* masih ada aksi berenergi di hub pagi? */
+    int i;
+    for (i = 0; i < NACT; i++)
+        if (ACTS[i].scene == SC_PAGI && ACTS[i].energy > 0 && muncul(&ACTS[i])) return 1;
+    return 0;
+}
+
+static void resolve(const Act *a) {
+    Outcome o = tentukanOutcome(karmaEfektif(&pl), a->mode == M_RISK ? BONUS_RISIKO : 0);
+    int i, n, ok = o <= OUT_UNTUNG;
+    for (i = 0; i < 2; i++) {
+        if (a->mode == M_RISK && !ok) chg(a->bad[i].stat, a->bad[i].lo);
+        else chg(a->e[i].stat, a->e[i].lo + (a->e[i].hi - a->e[i].lo) * (4 - (int)o) / 4);
+    }
+    if (a->karma) { ubahKarma(&pl, a->karma); noteAdd("Karma %+d", a->karma); }
+    if (ok && a->loot) {
+        n = a->loot == 2 ? acak(1, 2) : 1;
+        pl.ramuan[RAMUAN_HEAL] += n; noteAdd("ramuan +%d", n);
+        if (a->loot == 2 && acak(0, 1)) { i = acak(0, JUMLAH_EQ - 1); pl.bahan[i]++; noteAdd("%s +1", NAMA_BAHAN[i]); }
+    }
+    if (*note) say("\n[%s: %s]", namaOutcome(o), note);
+}
+
+static int stepAct(const Act *a) {
+    if (a->bg >= 0) bg = a->bg;
+    pakaiEnergi(&pl, a->energy);
+    if (a->mode == M_BRANCH) {
+        if (a->next == SC_RAMUAN) ramuanBack = SC_PAGI;
+        return a->next;
+    }
+    resolve(a);
+    if (a->enc && acak(1, 100) <= a->enc) { startCombat(-1); return NX_DONE; }
+    if (a->sub && acak(1, 100) <= a->sub) return SC_HEWAN;
+    return NX_AFTER;
+}
+
+/* ---------- Combat (port combat.c ke kartu) ---------- */
+static void giliranMusuh(void) {
+    int dmg = tg.kuat + acak(0, 3) - efekEq(&pl, EQ_ZIRAH);
+    if (dmg < 1) dmg = 1;
+    ubahStat(&pl, STAT_KESEHATAN, -dmg);
+    say("\n%s menyerangku: Kesehatan -%d.", tg.nama, dmg);
+}
+
+static int serang(void) {
+    int dmg;
+    if (tg.pedagang) {
+        say("\nAku merampok pedagang itu! Hartaku bertambah, namaku tercoreng.");
+        ubahStat(&pl, STAT_KEKAYAAN, 8); ubahStat(&pl, STAT_REPUTASI, -10); ubahKarma(&pl, -10);
+        return 1;
+    }
+    dmg = acak(8, 14) + efekEq(&pl, EQ_PEDANG) + (pl.buffDmg ? 6 : 0);
+    if (assessed && (tg.kondisi == K_TERLUKA || tg.kondisi == K_SAKIT)) {
+        dmg += 6;
+        say("\nAku menyerang celah kelemahannya!");
+    }
+    tg.hp -= dmg;
+    say("\nSeranganku menimbulkan %d damage.", dmg);
+    if (tg.hp <= 0) {
+        say("\n%s tumbang. Aku menjarah sedikit bekal.", tg.nama);
+        ubahStat(&pl, STAT_KEKAYAAN, 5); ubahStat(&pl, STAT_REPUTASI, 3);
+        return 1;
+    }
+    return 0;
+}
+
+static int negosiasi(void) {
+    int bonus = (assessed && tg.kondisi == K_KESULITAN) ? 20 : 0, untung;
+    Outcome o = tentukanOutcome(karmaEfektif(&pl), bonus);
+    say("\nHasil negosiasi: %s.", namaOutcome(o));
+    if (tg.pedagang) {
+        untung = deltaOutcome(o) + (bonus ? 5 : 0);
+        ubahStat(&pl, STAT_KEKAYAAN, untung);
+        if (untung > 0) ubahKarma(&pl, 1);
+        say(" Transaksi selesai (emas %+d).", untung);
+        return 1;
+    }
+    if (o <= OUT_UNTUNG) {
+        say(" %s mengurungkan niatnya dan pergi.", tg.nama);
+        ubahStat(&pl, STAT_REPUTASI, 2); ubahKarma(&pl, 2);
+        return 1;
+    }
+    say(" %s tidak menggubris bicaraku.", tg.nama);
+    return 0;
+}
+
+static int kabur(void) {
+    if (tg.pedagang) { say("\nAku pergi begitu saja."); return 1; }
+    if (tentukanOutcome(karmaEfektif(&pl), 0) <= OUT_NETRAL) { say("\nAku berhasil kabur."); return 1; }
+    say("\nAku gagal kabur!");
+    return 0;
+}
+
+static void endCombat(void) {
+    if (tg.boss) {
+        ubahStat(&pl, STAT_REPUTASI, 10); ubahStat(&pl, STAT_KEKAYAAN, 10);
+        say("\nAku mengalahkan %s! (Reputasi +10, emas +10)", tg.nama);
+        if (tg.tier == 0) say("\nBantuan berakhir. Selamat datang di permainan yang sebenarnya.");
+    }
+    pl.buffDmg = 0;
+    bg = BG_PERBATASAN;
+    afterAction();
+}
+
+static int stepCombat(int id) {
+    int done = 0;
+    switch (id) {
+    case SP_C_SERANG:  done = serang(); break;
+    case SP_C_AKSI:    done = negosiasi(); break;
+    case SP_C_ASESMEN: assessed = 1; say("\nAku mengamati: %s %s", tg.nama, KONDISI_TXT[tg.kondisi]); break;
+    case SP_C_KABUR:   done = kabur(); break;
+    }
+    if (done) { endCombat(); return NX_DONE; }
+    if (!tg.pedagang) giliranMusuh();
+    return SC_COMBAT;
+}
+
+static void startCombat(int boss) {               /* boss: -1 = encounter acak, 0..2 = tingkat boss */
+    int r;
+    assessed = 0;
+    memset(&tg, 0, sizeof tg);
+    if (boss >= 0) {
+        strcpy(tg.nama, BOSS_NAMA[boss]);
+        tg.boss = 1; tg.tier = boss; tg.hp = BOSS_HP[boss]; tg.kuat = BOSS_KUAT[boss];
+        say("\nAngin mendadak berat - %s menghadang jalanku di umur %d!", tg.nama, pl.umur);
+    } else {
+        if (acak(1, 100) <= 60) {
+            strcpy(tg.nama, MUSUH_NAMA[acak(0, 2)]);
+            tg.hp = acak(25, 40); tg.kuat = acak(3, 6);
+            r = acak(1, 3);
+            tg.kondisi = r == 2 ? K_TERLUKA : r == 3 ? K_SAKIT : K_NORMAL;
+            if (r == 2) tg.hp /= 2;
+        } else {
+            strcpy(tg.nama, "Pedagang Keliling");
+            tg.pedagang = 1; tg.hp = 20;
+            tg.kondisi = acak(1, 3) <= 2 ? K_KESULITAN : K_NORMAL;
+        }
+        say("\nAku berhadapan dengan %s di %s, apa yang ingin kulakukan?", tg.nama, LOKASI[acak(0, 3)]);
+    }
+    enterScene(SC_COMBAT, 1);
+}
+
+/* ---------- Toko, Pandai Besi, Ramuan ---------- */
+static int stepToko(int k) {
+    if (k < 3) {
+        if (bayar(HARGA_RAMUAN[k])) { pl.ramuan[k]++; say("\nAku membeli %s.", RAM_L[k]); }
+    } else if (k < 6) {
+        if (bayar(HARGA_BAHAN)) { pl.bahan[k - 3]++; say("\nAku membeli %s.", NAMA_BAHAN[k - 3]); }
+    } else if (pl.bonusEnergi) {
+        say("\nAku sudah menjadi anggota.");
+    } else if (bayar(HARGA_MEMBERSHIP)) {
+        pl.bonusEnergi = BONUS_MEMBERSHIP;
+        say("\nAku resmi anggota pelatihan. Energi harianku naik mulai besok.");
+    }
+    return SC_TOKO;
+}
+
+static int stepTempa(int i) {
+    int lv = pl.levelEq[i];
+    if (lv < 0) {
+        if (pl.bahan[i] < BAHAN_PER_EQ) say("\nBahanku kurang.");
+        else if (bayar(HARGA_RAKIT)) {
+            pl.bahan[i] -= BAHAN_PER_EQ; pl.levelEq[i] = 0;
+            say("\n%s selesai dirakit!", NAMA_EQ[i]);
+        }
+    } else if (lv < 3) {
+        if (bayar(HARGA_UPGRADE[lv])) { pl.levelEq[i]++; say("\n%s naik ke Lv%d!", NAMA_EQ[i], lv + 1); }
+    } else say("\n%s sudah mencapai level maksimal.", NAMA_EQ[i]);
+    return SC_TEMPA;
+}
+
+static void minum(int i) {
+    pl.ramuan[i]--;
+    if (i == RAMUAN_HEAL) { ubahStat(&pl, STAT_KESEHATAN, 20); say("\nAku meneguknya. Kesehatan +20."); }
+    else if (i == RAMUAN_DMG) { pl.buffDmg = 1; say("\nAku meneguknya. Seranganku menguat selama pertarungan ini."); }
+    else { pl.buffKarma = 10; say("\nAku meneguknya. Keberuntunganku naik sampai akhir hari."); }
+}
+
+/* ---------- Alur umur & hari ---------- */
+static void endGame(Ending e) {
+    page[0] = 0; plen = shown = 0;
+    say("%s", END_TXT[e]);
+    ncd = 0; phase = PH_END;
+    bg = e <= ENDING_GAGAL_MISKIN ? BG_BAHAYA : BG_SUNGAI;
+}
+
+static void yearEnd(void) {
+    static const int UMUR_BOSS[3] = { 16, 46, 86 };
+    int b;
+    Ending e;
+    for (b = 0; b < 3; b++)
+        if (pl.umur == UMUR_BOSS[b] && !bossDone) { bossDone = 1; startCombat(b); return; }
+    ubahStat(&pl, STAT_KEKAYAAN, -BIAYA_HIDUP);
+    ubahStat(&pl, STAT_KESEHATAN, PEMULIHAN_TAHUNAN);
+    say("\nAkhir tahun: biaya hidup %d gram emas, Kesehatan +%d (pulih).", BIAYA_HIDUP, PEMULIHAN_TAHUNAN);
+    e = cekGagal(&pl);
+    if (e == ENDING_NONE) { pl.umur += pl.umur < UMUR_DEWASA ? 5 : 10; e = cekMenang(&pl); }
+    if (e != ENDING_NONE) { endGame(e); return; }
+    hari = 1; bossDone = 0; dayFresh = 1;
+    resetEnergiHarian(&pl);
+    enterScene(SC_PAGI, 0);
+}
+
+static void nextDay(void) {
+    if (hari <= 5) hari++;                        /* hari 6 = fase akhir tahun (boss, biaya hidup) */
+    if (hari > 5) { yearEnd(); return; }
+    resetEnergiHarian(&pl);
+    dayFresh = 1;
+    enterScene(hari <= 3 ? SC_PAGI : acak(0, 1) ? SC_SUNGAI : SC_PENGEMBARA, 0);
+}
+
+static void afterAction(void) {                   /* aksi selesai: lanjut hari yang sama atau ganti hari */
+    if (hari <= 3 && adaAksi()) enterScene(SC_PAGI, 0);
+    else nextDay();
+}
+
+/* ---------- Scene: narasi, opsi ---------- */
+static void narrate(int sc) {
+    switch (sc) {
+    case SC_PROLOG:
+        say("Umur 0. Aku membuka mata di tepi hutan. Tanpa ingatan, tanpa nama, tanpa harta. Desa terdekat terlihat samar di kejauhan.\n"
+            "[Tutorial] Tiap umur ada 3 Hari Aksi dan 2 Hari Acak. Tiap hari aku punya Energi untuk beberapa aktivitas. "
+            "Umur melompat +5 sampai 16, lalu +10. Ada boss di umur 16, 46, dan 86. Bertahan sampai 106, hidupku tamat.");
+        break;
+    case SC_PAGI:
+        if (dayFresh) { say("\nAku sudah berumur %d, hari ke-%d. Cuaca cerah! Pagi ini aku akan...", pl.umur, hari); dayFresh = 0; }
+        else say("\nTenagaku masih tersisa (%d). Selanjutnya aku akan...", pl.energi);
+        break;
+    case SC_HUTAN:  say("\nPepohonan di sini rapat dan sunyi, jalan setapak bercabang."); break;
+    case SC_HEWAN:  say("\nDi balik tumpukan kayu, seekor hewan kecil merintih terperangkap jerat."); break;
+    case SC_SUNGAI: say("\nDi waktu luangku, aku sedang bersantai di pesisir sungai."); break;
+    case SC_PENGEMBARA: say("\nDi jalan desa, seorang pengembara misterius berjalan ke arahku."); break;
+    case SC_PASAR:  say("\nAku tiba di pasar. Toko ada di satu sisi, bengkel pandai besi di sisi lain. Aku akan..."); break;
+    case SC_TOKO:   say("\nAku melihat-lihat dagangan. Aku punya %d gram emas. Aku akan...", pl.stat[STAT_KEKAYAAN]); break;
+    case SC_TEMPA:  say("\nPercikan api menyambutku di bengkel. Aku punya %d gram emas. Aku akan...", pl.stat[STAT_KEKAYAAN]); break;
+    case SC_RAMUAN: say("\nAku memeriksa isi tasku. Aku akan meneguk..."); break;
+    }
+}
+
+static void addOpt(int id, int vibe, const char *fmt, ...) {
+    va_list ap;
+    if (nopt >= MAXOPT) return;
+    va_start(ap, fmt); vsnprintf(opts[nopt].label, sizeof opts[0].label, fmt, ap); va_end(ap);
+    opts[nopt].id = id; opts[nopt].vibe = vibe; nopt++;
+}
+
+static void buildOpts(int sc) {
+    int i, lv;
+    nopt = 0;
+    switch (sc) {
+    case SC_PROLOG: addOpt(SP_LANJUT, VIBE_TENANG, "Lanjut ke Umur 1."); break;
+    case SC_PASAR:
+        addOpt(SP_PASAR_TOKO, VIBE_KERJA, "masuk ke toko.");
+        addOpt(SP_PASAR_TEMPA, VIBE_KERJA, "mampir ke bengkel pandai besi.");
+        addOpt(SP_PASAR_KELUAR, VIBE_TENANG, "pergi meninggalkan pasar.");
+        break;
+    case SC_TOKO:
+        for (i = 0; i < JUMLAH_RAMUAN; i++)
+            addOpt(SP_BELI + i, VIBE_BERKAH, "membeli %s (%d g, punya %d).", RAM_L[i], HARGA_RAMUAN[i], pl.ramuan[i]);
+        for (i = 0; i < JUMLAH_EQ; i++)
+            addOpt(SP_BELI + 3 + i, VIBE_KERJA, "membeli %s (%d g, punya %d).", NAMA_BAHAN[i], HARGA_BAHAN, pl.bahan[i]);
+        addOpt(SP_BELI + 6, VIBE_KERJA, "mendaftar Membership Pelatihan (energi +%d, %d g)%s.",
+               BONUS_MEMBERSHIP, HARGA_MEMBERSHIP, pl.bonusEnergi ? " [dimiliki]" : "");
+        addOpt(SP_TOKO_KELUAR, VIBE_TENANG, "selesai berbelanja.");
+        break;
+    case SC_TEMPA:
+        for (i = 0; i < JUMLAH_EQ; i++) {
+            lv = pl.levelEq[i];
+            if (lv < 0) addOpt(SP_TEMPA + i, VIBE_TARUNG, "merakit %s (%d %s, punya %d) - %d g.",
+                               NAMA_EQ[i], BAHAN_PER_EQ, NAMA_BAHAN[i], pl.bahan[i], HARGA_RAKIT);
+            else if (lv < 3) addOpt(SP_TEMPA + i, VIBE_TARUNG, "meningkatkan %s Lv%d ke Lv%d - %d g.",
+                                    NAMA_EQ[i], lv, lv + 1, HARGA_UPGRADE[lv]);
+            else addOpt(SP_TEMPA + i, VIBE_BERKAH, "melihat %s Lv3 (maksimal).", NAMA_EQ[i]);
+        }
+        addOpt(SP_TEMPA_KELUAR, VIBE_TENANG, "meninggalkan bengkel.");
+        break;
+    case SC_RAMUAN:
+        for (i = 0; i < JUMLAH_RAMUAN; i++)
+            if (pl.ramuan[i] && (i != RAMUAN_DMG || ramuanBack == SC_COMBAT))
+                addOpt(SP_PAKAI + i, VIBE_BERKAH, "%s (x%d).", RAM_L[i], pl.ramuan[i]);
+        addOpt(SP_RAMUAN_BATAL, VIBE_TENANG, "Aku mengurungkan niat dan menutup tasku.");
+        break;
+    case SC_COMBAT:
+        addOpt(SP_C_SERANG, VIBE_TARUNG, "Aku menyerang!");
+        if (!tg.boss) addOpt(SP_C_AKSI, VIBE_WASPADA, "Aku mencoba berbicara.");
+        if (punyaRamuan(1)) addOpt(SP_C_ITEM, VIBE_BERKAH, "Aku meraih ramuan di tasku.");
+        if (!assessed) addOpt(SP_C_ASESMEN, VIBE_WASPADA, "Aku mengamati keadaannya baik-baik.");
+        if (!tg.boss) addOpt(SP_C_KABUR, VIBE_WASPADA, "Aku berusaha kabur.");
+        break;
+    default:                                      /* scene berbasis tabel ACTS */
+        for (i = 0; i < NACT; i++)
+            if (ACTS[i].scene == sc && muncul(&ACTS[i])) addOpt(i, ACTS[i].vibe, "%s", ACTS[i].label);
+    }
+    if (!nopt) addOpt(SP_PASAR_KELUAR, VIBE_TENANG, "melanjutkan hariku.");   /* jaring pengaman */
+}
+
+static void enterScene(int sc, int quiet) {
+    scene = sc; optPage = 0; ncd = 0; hover = -1; chosen = -1;
+    if (SCN_BG[sc] >= 0) bg = SCN_BG[sc];
+    if (!quiet) narrate(sc);
+    buildOpts(sc);
+    phase = PH_TYPE;
+}
+
+/* Jalankan opsi terpilih. Return: id scene berikutnya, NX_AFTER, atau NX_DONE (sudah pindah sendiri). */
+static int step(const Opt *o) {
+    int id = o->id;
+    note[0] = 0;
+    if (id < NACT) { add(" %s", o->label); return stepAct(&ACTS[id]); }
+    switch (id) {
+    case SP_LANJUT: resetEnergiHarian(&pl); dayFresh = 1; return SC_PAGI;
+    case SP_PASAR_TOKO:   add(" %s", o->label); return SC_TOKO;
+    case SP_PASAR_TEMPA:  add(" %s", o->label); return SC_TEMPA;
+    case SP_PASAR_KELUAR: add(" %s", o->label); return NX_AFTER;
+    case SP_TOKO_KELUAR:  say("\nAku selesai berbelanja."); return SC_PASAR;
+    case SP_TEMPA_KELUAR: say("\nAku meninggalkan bengkel."); return SC_PASAR;
+    case SP_RAMUAN_BATAL: add(" %s", o->label); return ramuanBack;
+    case SP_C_ITEM:       add(" %s", o->label); ramuanBack = SC_COMBAT; return SC_RAMUAN;
+    }
+    if (id >= SP_PAKAI) {
+        add(" %s", o->label);
+        minum(id - SP_PAKAI);
+        if (ramuanBack == SC_COMBAT && !tg.pedagang) giliranMusuh();   /* ramuan memakan giliran */
+        return ramuanBack;
+    }
+    if (id >= SP_TEMPA) return stepTempa(id - SP_TEMPA);
+    if (id >= SP_BELI) return stepToko(id - SP_BELI);
+    add(" %s", o->label);                         /* SP_C_SERANG..KABUR */
+    return stepCombat(id);
+}
+
+/* ---------- Kartu & animasi ---------- */
 static COLORREF mix(COLORREF a, COLORREF b, float t) {
     return RGB(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * t,
                GetGValue(a) + (GetGValue(b) - GetGValue(a)) * t,
                GetBValue(a) + (GetBValue(b) - GetBValue(a)) * t);
 }
 
-static void enterNode(int n) {
-    char buf[300];
-    int l;
-    if (n == N_PAGI)
-        snprintf(buf, sizeof buf, "Aku sudah berumur %d, hari ke-%d. Cuaca cerah! %s", pl.umur, hari, NODES[n].text);
-    else
-        snprintf(buf, sizeof buf, "%s", NODES[n].text);
-    l = (int)strlen(buf);
-    if (plen + l + 2 > PAGE_MAX) { page[0] = 0; plen = shown = 0; } /* balik halaman */
-    if (plen) { strcat(page, "\n"); plen++; }
-    strcat(page, buf);
-    plen += l;
-    node = n; art = NODES[n].art; ncd = 0; phase = PH_TYPE;
+static void fade(float *c, COLORREF t) {          /* warna latar menuju target, float agar tidak macet */
+    int k;
+    for (k = 0; k < 3; k++) c[k] += ((float)((t >> (8 * k)) & 255) - c[k]) * 0.06f;
 }
 
-static int advance(Ending *e) {
-    if (++hari > 5) {
-        hari = 1;
-        ubahStat(&pl, STAT_KEKAYAAN, -3);
-        ubahStat(&pl, STAT_KESEHATAN, 10);
-        pl.umur += pl.umur < UMUR_DEWASA ? 5 : 10;
-        *e = cekGagal(&pl);
-        if (*e == ENDING_NONE) *e = cekMenang(&pl);
-    }
-    return hari <= 3 ? N_PAGI : N_LUANG;
-}
-
-static void finishPick(void) {
-    const Choice *c = &NODES[node].c[chosen];
-    int nx = c->next;
-    Ending e;
-    if (c->stat != NO_STAT) ubahStat(&pl, c->stat, c->delta);
-    strcat(page, " "); strcat(page, c->label);
-    plen = (int)strlen(page);
-    e = cekGagal(&pl);
-    if (e == ENDING_NONE && nx == N_AUTO) nx = advance(&e);
-    if (e != ENDING_NONE) {
-        strcpy(page, END_TXT[e]); plen = (int)strlen(page); shown = 0;
-        art = ""; ncd = 0; phase = PH_END;
-        return;
-    }
-    enterNode(nx);
-}
+static COLORREF col(const float *c) { return RGB((int)(c[0] + 0.5f), (int)(c[1] + 0.5f), (int)(c[2] + 0.5f)); }
 
 static void spawnCards(void) {
-    int i, n = NODES[node].n, total = n * CW + (n - 1) * 30;
-    ncd = n; hover = -1; chosen = -1;
+    int i, n, first = 0, show = nopt, pages = nopt > MAXV ? (nopt + 3) / 4 : 1;
+    optPage %= pages;
+    if (pages > 1) { first = optPage * 4; show = nopt - first < 4 ? nopt - first : 4; }
+    n = show + (pages > 1);                       /* kartu terakhir "Lainnya" bila opsi > 5 */
+    ccw = n <= 3 ? 220 : n == 4 ? 200 : 160;
     for (i = 0; i < n; i++) {
-        cd[i].tx = (float)((W - total) / 2 + i * (CW + 30));
-        cd[i].ty = CARD_Y;
-        cd[i].x = cd[i].tx; cd[i].y = 720; cd[i].a = 0; cd[i].ta = 1;
+        Card *c = &cd[i];
+        c->opt  = i < show ? first + i : -1;
+        c->txt  = i < show ? opts[first + i].label : "Lihat pilihan lainnya...";
+        c->vibe = i < show ? opts[first + i].vibe : VIBE_LAIN;
+        c->tx = (float)((W - (n * ccw + (n - 1) * GAP)) / 2 + i * (ccw + GAP));
+        c->ty = CARD_Y; c->x = c->tx; c->y = 720; c->a = 0; c->ta = 1;
     }
-    phase = PH_CARDS;
+    ncd = n; hover = -1; chosen = -1; phase = PH_CARDS;
 }
 
 static int hit(int mx, int my) {
     int i;
     for (i = 0; i < ncd; i++)
-        if (mx >= cd[i].tx && mx <= cd[i].tx + CW && my >= CARD_Y - 25 && my <= CARD_Y + CH) return i;
+        if (mx >= cd[i].tx && mx <= cd[i].tx + ccw && my >= CARD_Y - 25 && my <= CARD_Y + CH) return i;
     return -1;
 }
 
+static void pick(int i) {
+    int j;
+    chosen = i; phase = PH_PICK;
+    for (j = 0; j < ncd; j++) {
+        cd[j].ta = 0;
+        if (j == i) cd[j].ty = 300;                          /* terangkat ke halaman */
+        else cd[j].tx = cd[j].tx < W / 2 ? -300.0f : 1200.0f; /* tersisih */
+    }
+}
+
+static void finishPick(void) {
+    int oi = cd[chosen].opt, nx;
+    Ending e;
+    if (oi < 0) { optPage++; spawnCards(); return; }          /* kartu "Lainnya" */
+    nx = step(&opts[oi]);
+    e = cekGagal(&pl);
+    if (e != ENDING_NONE) { endGame(e); return; }
+    if (nx == NX_AFTER) afterAction();
+    else if (nx != NX_DONE) enterScene(nx, nx == scene);      /* loop toko/tempa: tanpa narasi ulang */
+}
+
 static void onTick(void) {
-    int i, done = 1;
+    int i, k, done = 1;
+    fade(cDesk, BG_DESK[bg]); fade(cPaper, BG_PAPER[bg]);
     if (phase == PH_OPEN) {
         openT += 0.016f;
-        if (openT >= 1) { page[0] = 0; plen = shown = 0; enterNode(N_PAGI); } /* halaman kosong dulu */
+        if (openT >= 1) { page[0] = 0; plen = shown = 0; enterScene(SC_PROLOG, 0); } /* halaman kosong dulu */
     }
     if (phase == PH_TYPE || phase == PH_END) {
-        acc += 0.5f;
+        acc += 0.6f;
         while (acc >= 1 && shown < plen) { shown++; acc -= 1; }
         if (shown >= plen) { acc = 0; if (phase == PH_TYPE) spawnCards(); }
+    }
+    if (phase == PH_CARDS) {                                  /* hover dihitung tiap tick: tidak basi saat kartu baru muncul */
+        k = hit(lastMx, lastMy); hover = k;
+        for (i = 0; i < ncd; i++) cd[i].ty = (float)(CARD_Y - (i == k ? 22 : 0));
     }
     for (i = 0; i < ncd; i++) {
         cd[i].x += (cd[i].tx - cd[i].x) * 0.15f;
@@ -163,90 +643,77 @@ static void onTick(void) {
     if (phase == PH_PICK && done) finishPick();
 }
 
-static void pick(int i) {
-    int j;
-    chosen = i; phase = PH_PICK;
-    for (j = 0; j < ncd; j++) {
-        cd[j].ta = 0;
-        if (j == i) cd[j].ty = 300;                         /* terangkat ke halaman */
-        else cd[j].tx = cd[j].tx < W / 2 ? -300.0f : 1200.0f; /* tersisih */
-    }
+/* ---------- Gambar ---------- */
+static void txt(HDC dc, HFONT f, COLORREF c, int l, int t, int r, int b, const char *s, int n, UINT fl) {
+    RECT rc;
+    SetRect(&rc, l, t, r, b);
+    SelectObject(dc, f); SetTextColor(dc, c);
+    DrawTextA(dc, s, n, &rc, fl | DT_NOPREFIX);
 }
 
 static void draw(HDC dc) {
     RECT r = { 0, 0, W, H };
-    char buf[160];
-    int i, w;
-    const COLORREF DESK = RGB(38, 27, 22), PAPER = RGB(240, 226, 190), INK = RGB(50, 35, 25);
-    HBRUSH desk = CreateSolidBrush(DESK);
-    FillRect(dc, &r, desk); DeleteObject(desk);
+    char buf[160], lb[100];
+    int i, w, x, y;
+    COLORREF desk = col(cDesk), paper = col(cPaper);
+    HGDIOBJ oldF = GetCurrentObject(dc, OBJ_FONT);
     SetBkMode(dc, TRANSPARENT);
-    SelectObject(dc, GetStockObject(DC_BRUSH));
+    SelectObject(dc, GetStockObject(DC_BRUSH));       /* objek stok: tidak perlu DeleteObject */
     SelectObject(dc, GetStockObject(DC_PEN));
+    SetDCBrushColor(dc, desk);
+    FillRect(dc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
 
-    if (phase == PH_COVER || phase == PH_OPEN) {
+    if (phase <= PH_OPEN) {
         w = phase == PH_COVER ? 520 : (openT < 0.5f ? (int)(520 * (1 - 2 * openT)) : (int)(780 * (2 * openT - 1)));
-        SetDCBrushColor(dc, phase == PH_OPEN && openT >= 0.5f ? PAPER : RGB(110, 60, 35));
+        SetDCBrushColor(dc, phase == PH_OPEN && openT >= 0.5f ? paper : RGB(110, 60, 35));
         SetDCPenColor(dc, RGB(20, 12, 8));
         RoundRect(dc, W / 2 - w / 2, 120, W / 2 + w / 2, 500, 12, 12);
         if (phase == PH_COVER) {
-            SelectObject(dc, fText); SetTextColor(dc, RGB(230, 200, 140));
-            SetRect(&r, 0, 250, W, 330);
-            DrawTextA(dc, "KISAH DI TANAH PERBATASAN", -1, &r, DT_CENTER | DT_SINGLELINE);
-            SelectObject(dc, fArt); SetTextColor(dc, RGB(200, 170, 120));
-            SetRect(&r, 0, 400, W, 440);
-            DrawTextA(dc, "[ klik untuk membuka buku ]", -1, &r, DT_CENTER | DT_SINGLELINE);
+            txt(dc, fText, RGB(230, 200, 140), 0, 250, W, 330, "KISAH DI TANAH PERBATASAN", -1, DT_CENTER | DT_SINGLELINE);
+            txt(dc, fArt, RGB(200, 170, 120), 0, 400, W, 440, "[ klik untuk membuka buku ]", -1, DT_CENTER | DT_SINGLELINE);
         }
-        return;
+    } else {
+        sprintf(buf, "Umur %d | Hari %d/5 | Kes %d  Men %d  Emas %dg  Rep %d | Karma %d | Energi %d/%d",
+                pl.umur, hari > 5 ? 5 : hari, pl.stat[STAT_KESEHATAN], pl.stat[STAT_MENTAL],
+                pl.stat[STAT_KEKAYAAN], pl.stat[STAT_REPUTASI], pl.karma, pl.energi, pl.energiMaks);
+        txt(dc, fArt, RGB(210, 190, 150), 60, 16, W, 44, buf, -1, DT_SINGLELINE);
+
+        SetDCBrushColor(dc, paper); SetDCPenColor(dc, RGB(120, 90, 60));
+        RoundRect(dc, 60, 50, 840, 410, 10, 10);
+        MoveToEx(dc, 580, 65, NULL); LineTo(dc, 580, 395);
+        txt(dc, fText, INK, 90, 70, 565, 400, page, shown, DT_WORDBREAK);
+        txt(dc, fArt, mix(INK, paper, 0.3f), 605, 100, 830, 390, BG_ART[bg], -1, 0);
+
+        for (i = 0; i < ncd; i++) {
+            Card *c = &cd[i];
+            float f = 1 - c->a;
+            x = (int)c->x; y = (int)c->y;
+            SetDCBrushColor(dc, mix(i == hover ? RGB(255, 246, 220) : RGB(235, 218, 180), desk, f));
+            SetDCPenColor(dc, mix(RGB(120, 90, 60), desk, f));
+            RoundRect(dc, x, y, x + ccw, y + CH, 14, 14);
+            snprintf(lb, sizeof lb, "%s", c->txt);
+            lb[0] = (char)toupper((unsigned char)lb[0]);
+            txt(dc, fCard, mix(INK, desk, f), x + 12, y + 10, x + ccw - 12, y + CH - 44, lb, -1, DT_WORDBREAK);
+            txt(dc, fDood, mix(RGB(140, 110, 80), desk, f), x + 12, y + CH - 42, x + ccw - 8, y + CH - 6, VIBE_ART[c->vibe], -1, 0);
+        }
     }
-
-    sprintf(buf, "Umur %d | Kes %d  Men %d  Kek %d  Rep %d | Karma %d", pl.umur,
-            pl.stat[STAT_KESEHATAN], pl.stat[STAT_MENTAL], pl.stat[STAT_KEKAYAAN],
-            pl.stat[STAT_REPUTASI], pl.karma);
-    SelectObject(dc, fArt); SetTextColor(dc, RGB(210, 190, 150));
-    TextOutA(dc, 60, 16, buf, (int)strlen(buf));
-
-    SetDCBrushColor(dc, PAPER); SetDCPenColor(dc, RGB(120, 90, 60));
-    RoundRect(dc, 60, 50, 840, 410, 10, 10);
-    MoveToEx(dc, 580, 65, NULL); LineTo(dc, 580, 395);
-
-    SetTextColor(dc, INK);
-    SelectObject(dc, fText);
-    SetRect(&r, 90, 75, 565, 395);
-    DrawTextA(dc, page, shown, &r, DT_WORDBREAK | DT_NOPREFIX);
-    SelectObject(dc, fArt);
-    SetRect(&r, 605, 100, 830, 390);
-    DrawTextA(dc, art, -1, &r, DT_NOPREFIX);
-
-    for (i = 0; i < ncd; i++) {
-        float f = 1 - cd[i].a;
-        SetDCBrushColor(dc, mix(i == hover ? RGB(255, 246, 220) : RGB(235, 218, 180), DESK, f));
-        SetDCPenColor(dc, mix(RGB(120, 90, 60), DESK, f));
-        RoundRect(dc, (int)cd[i].x, (int)cd[i].y, (int)cd[i].x + CW, (int)cd[i].y + CH, 14, 14);
-        SelectObject(dc, fCard); SetTextColor(dc, mix(INK, DESK, f));
-        SetRect(&r, (int)cd[i].x + 14, (int)cd[i].y + 14, (int)cd[i].x + CW - 14, (int)cd[i].y + CH - 10);
-        DrawTextA(dc, NODES[node].c[i].label, -1, &r, DT_WORDBREAK | DT_NOPREFIX);
-    }
+    SelectObject(dc, oldF);
 }
 
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     int mx = (short)LOWORD(lp), my = (short)HIWORD(lp);
     switch (m) {
     case WM_CREATE:
-        fText = CreateFontA(-21, 0, 0, 0, FW_NORMAL, 0, 0, 0, 0, 0, 0, ANTIALIASED_QUALITY, 0, "Segoe Print");
-        fCard = CreateFontA(-17, 0, 0, 0, FW_NORMAL, 0, 0, 0, 0, 0, 0, ANTIALIASED_QUALITY, 0, "Segoe Print");
+        fText = CreateFontA(-20, 0, 0, 0, FW_NORMAL, 0, 0, 0, 0, 0, 0, ANTIALIASED_QUALITY, 0, "Segoe Print");
+        fCard = CreateFontA(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, 0, 0, 0, ANTIALIASED_QUALITY, 0, "Segoe Print");
         fArt  = CreateFontA(-15, 0, 0, 0, FW_BOLD, 0, 0, 0, 0, 0, 0, ANTIALIASED_QUALITY, FIXED_PITCH, "Consolas");
+        fDood = CreateFontA(-13, 0, 0, 0, FW_NORMAL, 0, 0, 0, 0, 0, 0, ANTIALIASED_QUALITY, FIXED_PITCH, "Consolas");
         SetTimer(h, 1, 16, NULL);
         return 0;
     case WM_TIMER: onTick(); InvalidateRect(h, NULL, FALSE); return 0;
-    case WM_MOUSEMOVE:
-        if (phase == PH_CARDS) {
-            int i, k = hit(mx, my);
-            hover = k;
-            for (i = 0; i < ncd; i++) cd[i].ty = (float)(CARD_Y - (i == k ? 22 : 0));
-        }
-        return 0;
+    case WM_MOUSEMOVE: lastMx = mx; lastMy = my; return 0;
     case WM_LBUTTONDOWN:
+        lastMx = mx; lastMy = my;
         if (phase == PH_COVER) { phase = PH_OPEN; openT = 0; }
         else if (phase == PH_TYPE) shown = plen;
         else if (phase == PH_CARDS) { int k = hit(mx, my); if (k >= 0) pick(k); }
@@ -256,13 +723,17 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC hdc = BeginPaint(h, &ps);
         HDC mem = CreateCompatibleDC(hdc);
-        HBITMAP bm = CreateCompatibleBitmap(hdc, W, H), old = SelectObject(mem, bm);
+        HBITMAP bm = CreateCompatibleBitmap(hdc, W, H), old = (HBITMAP)SelectObject(mem, bm);
         draw(mem);
         BitBlt(hdc, 0, 0, W, H, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old); DeleteObject(bm); DeleteDC(mem);
         EndPaint(h, &ps);
         return 0; }
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY:
+        KillTimer(h, 1);
+        DeleteObject(fText); DeleteObject(fCard); DeleteObject(fArt); DeleteObject(fDood);
+        PostQuitMessage(0);
+        return 0;
     }
     return DefWindowProc(h, m, wp, lp);
 }
@@ -273,10 +744,15 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE hp, LPSTR cl, int sw) {
     DWORD st = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     HWND h;
     MSG msg;
+    int k;
     (void)hp; (void)cl;
     srand((unsigned)time(NULL));
     inisialisasiPlayer(&pl);
     pl.umur = 1;
+    for (k = 0; k < 3; k++) {
+        cDesk[k]  = (float)((BG_DESK[BG_PERBATASAN] >> (8 * k)) & 255);
+        cPaper[k] = (float)((BG_PAPER[BG_PERBATASAN] >> (8 * k)) & 255);
+    }
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = proc; wc.hInstance = hi; wc.lpszClassName = "Diary";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
@@ -288,3 +764,4 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE hp, LPSTR cl, int sw) {
     while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
     return 0;
 }
+

@@ -4,8 +4,8 @@
 CPP      = g++.exe
 CC       = gcc.exe
 WINDRES  = windres.exe
-OBJ      = Active/diary.o Active/ending.o Active/player.o Active/util.o
-LINKOBJ  = Active/diary.o Active/ending.o Active/player.o Active/util.o
+OBJ      = Active/diary.o Active/ending.o Active/player.o Active/util.o Active/outcome.o
+LINKOBJ  = Active/diary.o Active/ending.o Active/player.o Active/util.o Active/outcome.o
 LIBS     = -L"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib" -L"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/lib" -static-libgcc -mwindows -lgdi32 -mwindows
 INCS     = -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include"
 CXXINCS  = -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include/c++"
@@ -35,3 +35,6 @@ Active/player.o: Active/player.c
 
 Active/util.o: Active/util.c
 	$(CC) -c Active/util.c -o Active/util.o $(CFLAGS)
+
+Active/outcome.o: Active/outcome.c
+	$(CC) -c Active/outcome.c -o Active/outcome.o $(CFLAGS)
