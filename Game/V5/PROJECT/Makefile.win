@@ -1,0 +1,43 @@
+# Project: Project1
+# Makefile created by Dev-C++ 5.11
+
+CPP      = g++.exe
+CC       = gcc.exe
+WINDRES  = windres.exe
+OBJ      = ../core/jalur.o ../core/journal.o ../core/outcome.o ../core/player.o ../core/util.o ../data/aksi_umum.o
+LINKOBJ  = ../core/jalur.o ../core/journal.o ../core/outcome.o ../core/player.o ../core/util.o ../data/aksi_umum.o
+LIBS     = -L"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib" -L"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/lib" -static-libgcc -mwindows
+INCS     = -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include"
+CXXINCS  = -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/x86_64-w64-mingw32/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include" -I"C:/Users/DENA/OneDrive/Desktop/Dev-Cpp/MinGW64/lib/gcc/x86_64-w64-mingw32/4.9.2/include/c++"
+BIN      = Project1.exe
+CXXFLAGS = $(CXXINCS) 
+CFLAGS   = $(INCS) 
+RM       = rm.exe -f
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before $(BIN) all-after
+
+clean: clean-custom
+	${RM} $(OBJ) $(BIN)
+
+$(BIN): $(OBJ)
+	$(CC) $(LINKOBJ) -o $(BIN) $(LIBS)
+
+../core/jalur.o: ../core/jalur.c
+	$(CC) -c ../core/jalur.c -o ../core/jalur.o $(CFLAGS)
+
+../core/journal.o: ../core/journal.c
+	$(CC) -c ../core/journal.c -o ../core/journal.o $(CFLAGS)
+
+../core/outcome.o: ../core/outcome.c
+	$(CC) -c ../core/outcome.c -o ../core/outcome.o $(CFLAGS)
+
+../core/player.o: ../core/player.c
+	$(CC) -c ../core/player.c -o ../core/player.o $(CFLAGS)
+
+../core/util.o: ../core/util.c
+	$(CC) -c ../core/util.c -o ../core/util.o $(CFLAGS)
+
+../data/aksi_umum.o: ../data/aksi_umum.c
+	$(CC) -c ../data/aksi_umum.c -o ../data/aksi_umum.o $(CFLAGS)
